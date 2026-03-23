@@ -1,94 +1,47 @@
 // Scrape Agent: Uses Claude Agent SDK WebSearch to find job URLs,
-// then Anthropic Batch API to parse page content at 50% off.
+// then plain HTTP fetch + Anthropic API for page parsing.
 //
 // Usage:
 //   npx tsx server/agents/scrape-agent.ts           # full scrape
-//   npx tsx server/agents/scrape-agent.ts --quick    # ATS sites only (faster)
+//   npx tsx server/agents/scrape-agent.ts --quick    # ATS sites only
+
+import { config } from "dotenv";
+config();
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { generateQueryMatrix, detectATS, type SearchQuery } from "../config/scrape-config.js";
-import { batchParsePages, type RawPage } from "../scraper/batch-parser.js";
+import { generateQueryMatrix, detectATS } from "../config/scrape-config.js";
+import { parseSinglePage } from "../scraper/batch-parser.js";
 import { loadJobs, saveJobs, mergeNewJobs, isDuplicate } from "../scraper/dedup.js";
 
 const QUICK_MODE = process.argv.includes("--quick");
 
-interface SearchResult {
-  url: string;
-  title: string;
-  snippet: string;
-}
+interface SearchResult { url: string; title: string; }
 
-// Run a batch of search queries through the Agent SDK.
-// The agent executes WebSearch for each query and returns structured results.
-async function runSearchBatch(queries: SearchQuery[]): Promise<SearchResult[]> {
-  const queryList = queries
-    .map((q, i) => `${i + 1}. ${q.query}`)
-    .join("\n");
-
-  const systemPrompt = `You are a job search agent. Execute each Google search query provided and collect ALL result URLs.
-
-For each query, call WebSearch with the exact query string. Collect every result URL, title, and snippet.
-
-After running ALL queries, output a single JSON array of all results:
-[{"url": "...", "title": "...", "snippet": "..."}, ...]
-
-IMPORTANT:
-- Execute EVERY query in the list — do not skip any
-- Include ALL results from every query
-- Deduplicate by URL (if the same URL appears in multiple queries, include it only once)
-- Output ONLY the JSON array, no other text`;
-
-  const allResults: SearchResult[] = [];
-
-  try {
-    for await (const message of query({
-      prompt: `Execute these ${queries.length} Google search queries and return ALL results as JSON:\n\n${queryList}`,
-      options: {
-        systemPrompt,
-        allowedTools: ["WebSearch"],
-        maxTurns: queries.length + 5, // enough turns for all queries + processing
-        permissionMode: "bypassPermissions",
-      },
-    })) {
-      if ((message as any).type === "result" && (message as any).subtype === "success" && (message as any).result) {
-        // Try to extract JSON array from the result
-        const jsonMatch = (message as any).result.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          try {
-            const parsed = JSON.parse(jsonMatch[0]) as SearchResult[];
-            allResults.push(...parsed);
-          } catch {
-            console.error("  Failed to parse agent search results as JSON");
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.error(`  Search batch failed: ${e}`);
+// Extract URLs from agent result text (markdown links, bare URLs)
+function extractUrls(text: string): SearchResult[] {
+  const results: SearchResult[] = [];
+  const seen = new Set<string>();
+  for (const match of text.matchAll(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g)) {
+    const url = match[2].replace(/\/+$/, "");
+    if (!seen.has(url)) { seen.add(url); results.push({ url, title: match[1] }); }
   }
-
-  return allResults;
+  return results;
 }
 
-// Fetch page HTML using a lightweight agent call with WebFetch
-async function fetchPageHtml(url: string): Promise<string | null> {
+// Fetch page content using plain HTTP (no agent overhead)
+async function fetchPage(url: string): Promise<string | null> {
   try {
-    for await (const message of query({
-      prompt: `Fetch this URL and return the raw HTML content: ${url}`,
-      options: {
-        allowedTools: ["WebFetch"],
-        maxTurns: 2,
-        permissionMode: "bypassPermissions",
-      },
-    })) {
-      if ((message as any).type === "result" && (message as any).subtype === "success" && (message as any).result) {
-        return (message as any).result;
-      }
-    }
+    const res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    return html;
   } catch {
     return null;
   }
-  return null;
 }
 
 async function main() {
@@ -103,44 +56,42 @@ async function main() {
   console.log(`Queries to execute: ${queries.length}`);
 
   const jobsData = loadJobs();
-  const existingCount = jobsData.jobs.length;
-  console.log(`Existing jobs in database: ${existingCount}`);
+  console.log(`Existing jobs in database: ${jobsData.jobs.length}`);
 
-  // Step 1: Run search queries in batches to avoid context overflow
-  // Group queries into batches of ~15 per agent session
-  const BATCH_SIZE = 15;
+  // Step 1: Run all searches via Agent SDK (one query() call per search)
   const allSearchResults: SearchResult[] = [];
   const errors: { source: string; query: string; error: string; timestamp: string }[] = [];
 
-  for (let i = 0; i < queries.length; i += BATCH_SIZE) {
-    const batch = queries.slice(i, i + BATCH_SIZE);
-    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-    const totalBatches = Math.ceil(queries.length / BATCH_SIZE);
-    console.log(`\n  Search batch ${batchNum}/${totalBatches} (${batch.length} queries)...`);
+  for (let i = 0; i < queries.length; i++) {
+    const q = queries[i];
+    console.log(`\n  [${i + 1}/${queries.length}] ${q.siteName}: ${q.query.slice(0, 80)}...`);
 
     try {
-      const results = await runSearchBatch(batch);
-      console.log(`  → Found ${results.length} results`);
-      allSearchResults.push(...results);
-    } catch (e) {
-      console.error(`  Batch ${batchNum} failed: ${e}`);
-      for (const q of batch) {
-        errors.push({
-          source: q.siteName,
-          query: q.query,
-          error: String(e),
-          timestamp: new Date().toISOString(),
-        });
+      for await (const message of query({
+        prompt: `Search Google for: ${q.query}\n\nList every result with title and URL.`,
+        options: {
+          allowedTools: ["WebSearch"],
+          maxTurns: 3,
+          permissionMode: "bypassPermissions",
+        },
+      })) {
+        const msg = message as any;
+        if (msg.type === "result" && msg.subtype === "success" && msg.result) {
+          const urls = extractUrls(msg.result);
+          console.log(`    → ${urls.length} results`);
+          allSearchResults.push(...urls);
+        }
       }
+    } catch (e) {
+      console.error(`    ✗ Search failed: ${e}`);
+      errors.push({ source: q.siteName, query: q.query, error: String(e), timestamp: new Date().toISOString() });
     }
 
-    // Small delay between batches to avoid rate limits
-    if (i + BATCH_SIZE < queries.length) {
-      await new Promise((r) => setTimeout(r, 2000));
-    }
+    // Delay between searches
+    await new Promise((r) => setTimeout(r, 1500));
   }
 
-  // Step 2: Dedup search results against existing jobs
+  // Step 2: Dedup
   const uniqueUrls = new Map<string, SearchResult>();
   for (const result of allSearchResults) {
     if (!isDuplicate(jobsData.jobs, result.url) && !uniqueUrls.has(result.url)) {
@@ -149,108 +100,86 @@ async function main() {
   }
 
   console.log(`\n  Total search results: ${allSearchResults.length}`);
-  console.log(`  After dedup: ${uniqueUrls.size} new unique URLs`);
+  console.log(`  Unique new URLs: ${uniqueUrls.size}`);
 
   if (uniqueUrls.size === 0) {
-    console.log("  No new jobs found. Done.");
+    console.log("  No new jobs found.");
     jobsData.last_scraped = new Date().toISOString();
-    jobsData.scrape_stats = {
-      total_queries: queries.length,
-      new_jobs_found: 0,
-      duplicates_skipped: allSearchResults.length,
-      detail_fetch_failed: 0,
-    };
+    jobsData.scrape_stats = { total_queries: queries.length, new_jobs_found: 0, duplicates_skipped: allSearchResults.length, detail_fetch_failed: 0 };
     jobsData.scrape_errors = errors;
     saveJobs(jobsData);
     return;
   }
 
-  // Step 3: Fetch page HTML for each new URL
-  console.log(`\n  Fetching ${uniqueUrls.size} pages for parsing...`);
-  const rawPages: RawPage[] = [];
-  let fetchFailed = 0;
+  // Step 3: Fetch pages with plain HTTP + parse with Anthropic API
+  console.log(`\n  Fetching & parsing ${uniqueUrls.size} pages...`);
   let fetchCount = 0;
+  let fetchFailed = 0;
+  let parseSuccess = 0;
 
   for (const [url, result] of uniqueUrls) {
     fetchCount++;
-    if (fetchCount % 10 === 0) {
-      console.log(`  Fetched ${fetchCount}/${uniqueUrls.size}...`);
-    }
+    process.stdout.write(`  [${fetchCount}/${uniqueUrls.size}] `);
 
-    const html = await fetchPageHtml(url);
-    if (html) {
-      rawPages.push({
-        url,
-        html,
-        ats: detectATS(url),
-        source: "google_site_search",
-      });
-    } else {
+    const html = await fetchPage(url);
+    if (!html) {
       fetchFailed++;
-      // Still add the job with basic info from search snippet
-      const newJob = {
-        url,
-        title: result.title || null,
-        company: null,
-        ats: detectATS(url),
-        location: null,
-        salary: null,
-        seniority: null,
-        source: "google_site_search",
-        scrape_detail_failed: true,
-      };
-      mergeNewJobs(jobsData, [newJob]);
+      // Add with basic search snippet info
+      mergeNewJobs(jobsData, [{
+        url, title: result.title || null, company: null, ats: detectATS(url),
+        location: null, salary: null, seniority: null, source: "google_site_search", scrape_detail_failed: true,
+      }]);
+      console.log(`⚠ Fetch failed — added with title: ${result.title}`);
+      continue;
     }
 
-    // Small delay between fetches
-    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const parsed = await parseSinglePage({ url, html, ats: detectATS(url), source: "google_site_search" });
+
+      if (parsed.is_job_posting && parsed.status !== "closed") {
+        mergeNewJobs(jobsData, [{
+          url, title: parsed.title || result.title || null, company: parsed.company,
+          ats: parsed.ats, location: parsed.location, salary: parsed.salary,
+          seniority: parsed.seniority, source: parsed.source, scrape_detail_failed: false,
+        }]);
+        parseSuccess++;
+        console.log(`✓ ${parsed.title} @ ${parsed.company} | ${parsed.location || '?'} | ${parsed.salary || 'no salary'}`);
+      } else if (parsed.status === "closed") {
+        console.log(`✗ Closed`);
+      } else if (!parsed.is_job_posting) {
+        console.log(`✗ Not a job posting`);
+      } else if (parsed.parse_failed) {
+        // Add with basic info on parse failure
+        mergeNewJobs(jobsData, [{
+          url, title: result.title || null, company: null, ats: detectATS(url),
+          location: null, salary: null, seniority: null, source: "google_site_search", scrape_detail_failed: true,
+        }]);
+        console.log(`⚠ Parse failed: ${parsed.parse_fail_reason}`);
+      }
+    } catch (e) {
+      fetchFailed++;
+      console.log(`✗ Parse error: ${e}`);
+    }
+
+    // Small delay to respect rate limits
+    await new Promise((r) => setTimeout(r, 300));
   }
 
-  // Step 4: Parse pages using Batch API (50% off)
-  console.log(`\n  Parsing ${rawPages.length} pages via Batch API...`);
-  const parsedJobs = await batchParsePages(rawPages);
+  // Step 4: Save
+  const today = new Date().toISOString().split("T")[0];
+  const newCount = jobsData.jobs.filter((j) => j.date_found === today && j.status === "new").length;
 
-  // Step 5: Add parsed jobs to database
-  const validJobs = parsedJobs
-    .filter((j) => j.is_job_posting && j.status !== "closed")
-    .map((j) => ({
-      url: j.url,
-      title: j.title,
-      company: j.company,
-      ats: j.ats,
-      location: j.location,
-      salary: j.salary,
-      seniority: j.seniority,
-      source: j.source,
-      scrape_detail_failed: j.parse_failed,
-    }));
-
-  const newCount = mergeNewJobs(jobsData, validJobs);
-
-  // Step 6: Save results
   jobsData.last_scraped = new Date().toISOString();
   jobsData.scrape_stats = {
-    total_queries: queries.length,
-    new_jobs_found: newCount,
-    duplicates_skipped: allSearchResults.length - uniqueUrls.size,
-    detail_fetch_failed: fetchFailed + parsedJobs.filter((j) => j.parse_failed).length,
+    total_queries: queries.length, new_jobs_found: newCount,
+    duplicates_skipped: allSearchResults.length - uniqueUrls.size, detail_fetch_failed: fetchFailed,
   };
   jobsData.scrape_errors = errors;
   saveJobs(jobsData);
 
-  // Summary
   console.log("\n=== Scrape Complete ===");
-  console.log(`  Queries executed: ${queries.length}`);
-  console.log(`  New jobs found: ${newCount}`);
-  console.log(`  Duplicates skipped: ${allSearchResults.length - uniqueUrls.size}`);
-  console.log(`  Fetch/parse failures: ${fetchFailed + parsedJobs.filter((j) => j.parse_failed).length}`);
-  console.log(`  Total jobs in database: ${jobsData.jobs.length}`);
-  if (errors.length > 0) {
-    console.log(`  Scrape errors: ${errors.length}`);
-    for (const err of errors.slice(0, 5)) {
-      console.log(`    - ${err.source}: ${err.error}`);
-    }
-  }
+  console.log(`  Queries: ${queries.length} | New jobs: ${newCount} | Parse success: ${parseSuccess} | Failures: ${fetchFailed}`);
+  console.log(`  Total in database: ${jobsData.jobs.length}`);
 }
 
 main().catch(console.error);
