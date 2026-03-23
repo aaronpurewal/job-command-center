@@ -1,0 +1,56 @@
+# profile.example.yaml — Copy to profile.yaml and fill in your details
+# profile.yaml is gitignored and never committed.
+
+first_name: Aaron
+last_name: ""              # ← Fill in
+email: ""                  # ← Fill in
+phone: ""                  # ← Fill in
+location: "New York, NY"
+
+# Links
+linkedin: ""               # ← Full URL: https://linkedin.com/in/...
+website: ""                # ← Portfolio URL
+github: ""                 # ← https://github.com/...
+
+# Resume — path relative to project root
+resume_path: "./resume.pdf"
+
+# Current role
+current_company: "Jefferies"
+current_title: "Forward Deployed Engineer, AI Strategy"
+years_experience: "5"
+
+# Work authorization
+work_authorization: "Yes"
+sponsorship_needed: "No"
+
+# Defaults for common form fields
+salary_expectation: ""     # Leave blank — agent will always ask you
+start_date: "Immediately"
+how_heard: "Company website"
+
+# Background context — the agent uses this to answer custom questions
+# Write in first person. Include anything you'd want in a tailored answer.
+background_context: |
+  I'm a Forward Deployed Engineer on the AI Strategy team at Jefferies, a global
+  investment bank. I lead firmwide AI vendor evaluation across 100+ vendors, conduct
+  InfoSec due diligence, build internal prompt engineering systems, and drive firm-wide
+  AI adoption strategy. I hold Series 79 and SIE licenses.
+
+  I co-authored an ICML 2024 paper "Risks and Opportunities of Open-Source Generative AI"
+  which developed a foundational openness taxonomy for LLMs.
+
+  Recent projects:
+  - Built a modular IC memo prompt architecture for private credit memo generation
+  - Built Promptgineer, a Next.js app for automated prompt customization and grading
+  - Built the Surgical Slide Engine (SSE), a production-grade AI-powered PowerPoint
+    editing system using Aspose.Slides with a two-pass LLM architecture
+  - Scored 795/1000 on the Claude Certified Architect Foundations practice exam
+
+  Prior experience: Deloitte, PwC (Big 4 consulting), Convoy, Ouro/Netspend (startups).
+
+  Technical skills: Python, TypeScript, Next.js, React, Claude API, OpenAI API,
+  LangChain, RAG, agentic systems, eval frameworks, AWS, Docker, Supabase.
+
+  I have deep financial services domain expertise spanning investment banking,
+  private credit, and asset management.

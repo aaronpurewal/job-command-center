@@ -6,3 +6,11 @@ search_urls.json
 scraped_jobs.json
 *.pyc
 __pycache__/
+
+# Personal data — never commit
+profile.yaml
+resume.pdf
+.env
+
+# Generated data
+server/data/jobs.json
