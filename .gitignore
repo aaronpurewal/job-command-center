@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.DS_Store
+applications_log.json
+search_urls.json
+scraped_jobs.json
+*.pyc
+__pycache__/

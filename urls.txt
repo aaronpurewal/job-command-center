@@ -1,0 +1,29 @@
+# Job URLs for batch auto-apply
+# Lines starting with # are ignored
+# Add one URL per line
+
+# TIER 1 — Model Providers (APPLY FIRST)
+https://job-boards.greenhouse.io/anthropic/jobs/4985877008
+https://job-boards.greenhouse.io/anthropic/jobs/5074695008
+https://job-boards.greenhouse.io/xai/jobs/4701523007
+https://jobs.lever.co/palantir/636fc05c-d348-4a06-be51-597cb9e07488
+https://job-boards.greenhouse.io/scaleai/jobs/4597399005
+https://scale.com/careers/4593571005
+
+# TIER 2 — FinServ AI
+https://jobs.ashbyhq.com/ramp/d204e136-2749-42de-82b4-88a0dd352090
+https://jobs.ashbyhq.com/moment/f8e990cd-4517-47bb-93b0-3c5f1fddeb07
+https://job-boards.greenhouse.io/icapitalnetwork/jobs/8457208002
+https://jobs.ashbyhq.com/titan-ai/96cafb71-b45f-4ca4-9f20-7e2fdc3ec119
+https://jobs.ashbyhq.com/Parcha/16f20b99-f941-47c6-83cf-2ea244098cb1
+
+# TIER 3 — Hot Startups
+https://job-boards.greenhouse.io/cresta/jobs/4759347008
+https://jobs.ashbyhq.com/baseten/84c1801c-1a65-49fb-aaaa-beeafd530e7e
+https://jobs.ashbyhq.com/inkeep/f277f68d-c397-4919-beeb-67ee1e19dc91
+https://jobs.ashbyhq.com/synthflow/b0cb2768-ac18-42a3-94b2-5e627f24023c
+https://jobs.ashbyhq.com/Serval/f55f33e2-f273-4267-b94d-5c94fdcac7d6
+https://jobs.ashbyhq.com/gigaml/0bd3cb15-811f-4a6b-ac12-781f24735a86
+https://jobs.ashbyhq.com/osmo/7f37ca45-489e-40a7-8940-41e6aebb9d21
+https://job-boards.greenhouse.io/labelbox/jobs/4640927007
+https://job-boards.greenhouse.io/defenseunicorns/jobs/4980238007
