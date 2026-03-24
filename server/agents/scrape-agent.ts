@@ -147,9 +147,7 @@ async function main() {
     console.log(`${results.length} results`);
     allSearchResults.push(...results);
 
-    if (results.length === 0) {
-      errors.push({ source: q.siteName, query: q.query, error: "no results", timestamp: new Date().toISOString() });
-    }
+    // Don't log zero-result queries as errors — they're normal for niche titles
 
     // Small delay to be respectful
     await new Promise((r) => setTimeout(r, 200));

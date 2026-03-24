@@ -199,7 +199,7 @@ export default function JobCommandCenter() {
             { label: "New Today", val: data.newToday?.length || 0, color: "#10b981" },
             { label: "Previously Seen", val: data.previouslySeen?.length || 0, color: "#f59e0b" },
             { label: "Applied", val: data.applied?.length || 0, color: "#3b82f6" },
-            { label: "Fetch Errors", val: data.scrape_stats?.detail_fetch_failed || 0, color: "#ef4444" },
+            { label: "Partial Data", val: data.scrape_stats?.detail_fetch_failed || 0, color: "#f59e0b" },
           ].map(s => (
             <div key={s.label} style={{ background: "#111118", border: "1px solid #1a1a22", borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
               <div style={{ fontSize: 18, fontWeight: 700, color: s.color, fontFamily: "'Space Grotesk', sans-serif" }}>{s.val}</div>
@@ -208,10 +208,10 @@ export default function JobCommandCenter() {
           ))}
         </div>
 
-        {/* SCRAPE ERRORS BANNER */}
-        {data.scrape_errors?.length > 0 && (
+        {/* SCRAPE ERRORS BANNER — only show real failures, not zero-result queries */}
+        {data.scrape_errors?.filter(e => e.error !== "no results").length > 0 && (
           <div style={{ background: "#1a1111", border: "1px solid #3a1515", borderRadius: 6, padding: "6px 12px", marginBottom: 12, fontSize: 10, color: "#ef4444" }}>
-            Blocked sources: {data.scrape_errors.map(e => e.source).filter((v, i, a) => a.indexOf(v) === i).join(", ")}
+            Scrape issues: {data.scrape_errors.filter(e => e.error !== "no results").map(e => e.source).filter((v, i, a) => a.indexOf(v) === i).join(", ")}
           </div>
         )}
 
