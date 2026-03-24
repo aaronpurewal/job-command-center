@@ -79,21 +79,25 @@ Steps:
             const answers: Record<string, string> = {};
 
             for (const q of input.questions || []) {
-              console.log(`\n  ${q.header}: ${q.question}`);
               const options = q.options || [];
-              for (let i = 0; i < options.length; i++) {
-                console.log(`    ${i + 1}. ${options[i].label} — ${options[i].description || ""}`);
-              }
-              console.log("    (Enter a number, or type your own answer)");
+              // Compact display: question + options on fewer lines
+              const optStr = options.map((o: any, i: number) => `${i + 1}) ${o.label}`).join("  ");
+              console.log(`\n  ${q.question}`);
+              console.log(`  ${optStr}`);
+              console.log(`  [Enter = ${options[0]?.label || "1"}]`);
 
-              const response = (await prompt("    > ")).trim();
+              const response = (await prompt("  > ")).trim();
 
-              // Check if response is a number
-              const num = parseInt(response, 10);
-              if (!isNaN(num) && num >= 1 && num <= options.length) {
-                answers[q.question] = options[num - 1].label;
+              if (response === "" && options.length > 0) {
+                // Enter = first option (Submit / Accept)
+                answers[q.question] = options[0].label;
               } else {
-                answers[q.question] = response;
+                const num = parseInt(response, 10);
+                if (!isNaN(num) && num >= 1 && num <= options.length) {
+                  answers[q.question] = options[num - 1].label;
+                } else {
+                  answers[q.question] = response;
+                }
               }
             }
 
@@ -153,22 +157,18 @@ async function main() {
     console.log(`  Batch mode: ${toApply.length} jobs to apply to`);
     console.log(`  (${newJobs.length} total new, limit: ${BATCH_LIMIT === Infinity ? "none" : BATCH_LIMIT})\n`);
 
+    console.log("  Auto-advancing between jobs. Press Ctrl+C to stop.\n");
+
     for (let i = 0; i < toApply.length; i++) {
       const job = toApply[i];
-      console.log(`\n[${i + 1}/${toApply.length}]`);
+      console.log(`\n[${i + 1}/${toApply.length}] ${job.title || "?"} @ ${job.company || "?"}`);
       await applyToJob(job);
 
-      // Ask if user wants to continue
+      // Auto-advance with small delay
       if (i < toApply.length - 1) {
-        const cont = await prompt("\n  Continue to next job? (y/n): ");
-        if (cont.toLowerCase() !== "y") {
-          console.log("  Stopping batch.");
-          break;
-        }
+        console.log(`\n  → Next in 2s... (Ctrl+C to stop)`);
+        await new Promise((r) => setTimeout(r, 2000));
       }
-
-      // Small delay between applications
-      await new Promise((r) => setTimeout(r, 2000));
     }
 
     // Print summary

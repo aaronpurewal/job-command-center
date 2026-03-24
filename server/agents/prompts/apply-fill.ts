@@ -67,15 +67,25 @@ When a dropdown doesn't have an exact match for profile data:
 - Wait for page loads between steps
 
 ### 8. BEFORE SUBMIT
-ALWAYS pause before submitting. Show a summary:
-- Every field you filled and what value
-- Every field you skipped and why
-- Ask the user to confirm: "Submit this application?" with options Yes / No / Let me review in browser
+ALWAYS pause before submitting. Show a COMPACT summary using AskUserQuestion:
+
+If ALL fields filled successfully (no failures, no skipped required fields):
+  Show a SHORT summary — just the company name and field count:
+  Question: "✓ [Company] — [N] fields filled. Submit?"
+  Options: 1) Submit  2) Review in browser first  3) Skip this job
+
+If ANY fields FAILED or look suspicious:
+  Show a WARNING summary with details of what went wrong:
+  Question: "⚠ [Company] — [N] filled, [M] failed: [list]. Submit anyway?"
+  Options: 1) Submit anyway  2) Review in browser first  3) Skip this job
+
+Keep summaries as short as possible. The user wants to fly through clean
+applications and only slow down when something is wrong.
 
 ### 9. ERRORS
 If a field fails to fill (element not found, wrong type, etc.):
 - Skip it and continue with other fields
-- Include it in the pre-submit summary as "FAILED: [field] - [reason]"
+- Flag it in the pre-submit summary so the user knows
 - Do NOT crash or stop the entire application
 
 ### 10. AFTER SUBMIT
