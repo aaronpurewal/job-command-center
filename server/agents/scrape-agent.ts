@@ -62,6 +62,37 @@ const JUNK_TITLE_PATTERNS = [
   /^\d+ .* Jobs /i,                   // "119 ai prompt engineer Jobs"
 ];
 
+// Non-US location indicators (for filtering during parse)
+const NON_US_PATTERNS = [
+  /\b(India|Bangalore|Bengaluru|Chennai|Mumbai|Pune|Gurugram|Noida|Delhi)\b/i,
+  /\b(London|England|UK|United Kingdom|Dublin|Ireland)\b/i,
+  /\b(Paris|France|Germany|Munich|Berlin|Hamburg)\b/i,
+  /\b(Barcelona|Spain|Madrid|Italy|Milan)\b/i,
+  /\b(Tokyo|Japan|Singapore|Hong Kong|China|Taiwan|Taipei)\b/i,
+  /\b(Sydney|Australia|Melbourne)\b/i,
+  /\b(Toronto|Canada|Ontario|Vancouver|Edmonton|Montreal)\b/i,
+  /\b(Dubai|UAE|Abu Dhabi|Casablanca|Morocco)\b/i,
+  /\b(Israel|Tel Aviv|Warsaw|Copenhagen|Budapest|Zagreb)\b/i,
+  /\b(Kuala Lumpur|Malaysia|Seoul|Korea)\b/i,
+  /\b(Mexico City|Brazil|Argentina|LatAm)\b/i,
+  /\b(Turkey|Istanbul)\b/i,
+];
+
+const US_PATTERNS = /\b(US|USA|United States|Remote|New York|San Francisco|Boston|Austin|Seattle|Chicago|Washington|California|NYC|SF|Denver|Atlanta|Dallas|Reno|Pittsburgh|Charlotte|Los Angeles|Portland|Phoenix|Durham|Brooklyn)\b/i;
+
+export function isNonUS(location: string | null, title: string | null): boolean {
+  if (location) {
+    const hasUS = US_PATTERNS.test(location);
+    const hasNonUS = NON_US_PATTERNS.some((p) => p.test(location));
+    if (hasNonUS && !hasUS) return true;
+  }
+  if (title) {
+    if (/\bEMEA\b|\bAPAC\b|\bLATAM\b/i.test(title)) return true;
+    if (/- (Paris|London|UK|India|Germany|Morocco|MENA)\b/i.test(title)) return true;
+  }
+  return false;
+}
+
 function isJunk(url: string, title: string): boolean {
   if (JUNK_URL_PATTERNS.some((p) => p.test(url))) return true;
   if (title && JUNK_TITLE_PATTERNS.some((p) => p.test(title))) return true;
@@ -202,13 +233,18 @@ async function main() {
       const parsed = await parseSinglePage({ url, html, ats: detectATS(url), source: "serper" });
 
       if (parsed.is_job_posting && parsed.status !== "closed") {
-        mergeNewJobs(jobsData, [{
-          url, title: parsed.title || result.title || null, company: parsed.company,
-          ats: parsed.ats, location: parsed.location, salary: parsed.salary,
-          seniority: parsed.seniority, source: parsed.source, scrape_detail_failed: false,
-        }]);
-        parseSuccess++;
-        console.log(`✓ ${(parsed.title || "?").slice(0, 40)} @ ${parsed.company || "?"} | ${parsed.salary || "-"}`);
+        // Filter non-US jobs
+        if (isNonUS(parsed.location, parsed.title)) {
+          console.log(`✗ Non-US: ${parsed.location || parsed.title}`);
+        } else {
+          mergeNewJobs(jobsData, [{
+            url, title: parsed.title || result.title || null, company: parsed.company,
+            ats: parsed.ats, location: parsed.location, salary: parsed.salary,
+            seniority: parsed.seniority, source: parsed.source, scrape_detail_failed: false,
+          }]);
+          parseSuccess++;
+          console.log(`✓ ${(parsed.title || "?").slice(0, 40)} @ ${parsed.company || "?"} | ${parsed.salary || "-"}`);
+        }
       } else if (parsed.status === "closed") {
         console.log(`✗ Closed`);
       } else if (!parsed.is_job_posting) {
