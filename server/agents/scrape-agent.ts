@@ -1,5 +1,5 @@
-// Scrape Agent: Uses Claude Agent SDK WebSearch to find job URLs,
-// then plain HTTP fetch + Anthropic API for page parsing.
+// Scrape Agent: Uses Serper.dev for Google search ($0), then
+// platform-specific extractors + Claude API fallback for page parsing.
 //
 // Usage:
 //   npx tsx server/agents/scrape-agent.ts           # full scrape
@@ -8,80 +8,83 @@
 import { config } from "dotenv";
 config();
 
-import { query } from "@anthropic-ai/claude-agent-sdk";
 import { generateQueryMatrix, detectATS } from "../config/scrape-config.js";
 import { parseSinglePage } from "../scraper/batch-parser.js";
 import { loadJobs, saveJobs, mergeNewJobs, isDuplicate } from "../scraper/dedup.js";
 
 const QUICK_MODE = process.argv.includes("--quick");
+const SERPER_API_KEY = process.env.SERPER_API_KEY;
 
-interface SearchResult { url: string; title: string; }
+if (!SERPER_API_KEY) {
+  console.error("Missing SERPER_API_KEY in .env — get a free key at https://serper.dev");
+  process.exit(1);
+}
+
+interface SearchResult { url: string; title: string; snippet: string; }
 
 // URLs that are search/index pages, not actual job postings
 const JUNK_URL_PATTERNS = [
-  /wellfound\.com\/jobs\?/, // wellfound search results page
-  /startup\.jobs\/roles\//, // startup.jobs category pages
-  /startup\.jobs\/interview-questions\//, // interview prep pages
-  /startup\.jobs\/artificial-intelligence-jobs$/, // index page
-  /startup\.jobs\/jobs\?/, // search results
-  /startup\.jobs\/company\//, // company profiles (not job posts)
-  /indeed\.com/, // removed entirely
-  /news\.ycombinator\.com/, // HN comments
-  /greenhouse\.io\/job-board$/, // greenhouse index
-  /greenhouse\.io\/embed\//, // embed widgets
-  /jobs\.ashbyhq\.com\/?$/, // ashby index
+  /wellfound\.com\/jobs\?/,
+  /startup\.jobs\/roles\//,
+  /startup\.jobs\/interview-questions\//,
+  /startup\.jobs\/artificial-intelligence-jobs$/,
+  /startup\.jobs\/jobs\?/,
+  /startup\.jobs\/company\//,
+  /indeed\.com/,
+  /news\.ycombinator\.com/,
+  /greenhouse\.io\/job-board$/,
+  /greenhouse\.io\/embed\//,
+  /jobs\.ashbyhq\.com\/?$/,
 ];
 
-// Titles that indicate non-job-posting content
 const JUNK_TITLE_PATTERNS = [
-  /^link$/i,
-  /^view$/i,
-  /^ask hn/i,
-  /^comment on/i,
-  /^i analyzed/i,
-  /^what (is|are)/i,
-  /^why /i,
-  /search directly/i,
-  /^greenhouse\.io/,
-  /^jobs\.ashbyhq\.com$/,
-  /March 2026\)$/,  // "Mistral AI Jobs (March 2026)"
+  /^ask hn/i, /comment/i, /^i analyzed/i, /^what (is|are)/i,
+  /^why /i, /search directly/i, /job-board/i,
 ];
 
-// Extract URLs from agent result text (markdown links, bare URLs)
-function extractUrls(text: string): SearchResult[] {
-  const results: SearchResult[] = [];
-  const seen = new Set<string>();
-
-  for (const match of text.matchAll(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g)) {
-    const url = match[2].replace(/\/+$/, "");
-    let title = match[1].trim();
-
-    // Skip junk URLs
-    if (JUNK_URL_PATTERNS.some((p) => p.test(url))) continue;
-
-    // Skip junk titles
-    if (JUNK_TITLE_PATTERNS.some((p) => p.test(title))) continue;
-
-    // If title is just "Link" or a bare URL, try to extract from URL slug
-    if (/^(link|view)$/i.test(title) || title.includes(".com")) {
-      const slug = url.split("/").pop()?.replace(/[-_]/g, " ").replace(/[a-f0-9]{8,}/g, "").trim();
-      if (slug && slug.length > 3) {
-        title = slug.split(" ").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-      } else {
-        continue; // Can't extract a meaningful title, skip
-      }
-    }
-
-    if (!seen.has(url)) {
-      seen.add(url);
-      results.push({ url, title });
-    }
-  }
-
-  return results;
+function isJunk(url: string, title: string): boolean {
+  if (JUNK_URL_PATTERNS.some((p) => p.test(url))) return true;
+  if (title && JUNK_TITLE_PATTERNS.some((p) => p.test(title))) return true;
+  return false;
 }
 
-// Fetch page content using plain HTTP (no agent overhead)
+// Call Serper.dev Google Search API
+async function serperSearch(query: string): Promise<SearchResult[]> {
+  try {
+    const res = await fetch("https://google.serper.dev/search", {
+      method: "POST",
+      headers: {
+        "X-API-KEY": SERPER_API_KEY!,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ q: query, num: 20 }),
+    });
+
+    if (!res.ok) {
+      console.error(`    Serper error: ${res.status} ${res.statusText}`);
+      return [];
+    }
+
+    const data = await res.json() as any;
+    const results: SearchResult[] = [];
+
+    for (const item of data.organic || []) {
+      if (!item.link || isJunk(item.link, item.title || "")) continue;
+      results.push({
+        url: item.link.replace(/\/+$/, ""),
+        title: item.title || "",
+        snippet: item.snippet || "",
+      });
+    }
+
+    return results;
+  } catch (e) {
+    console.error(`    Serper request failed: ${e}`);
+    return [];
+  }
+}
+
+// Fetch page content using plain HTTP
 async function fetchPage(url: string): Promise<string | null> {
   try {
     const res = await fetch(url, {
@@ -90,8 +93,7 @@ async function fetchPage(url: string): Promise<string | null> {
       signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
-    const html = await res.text();
-    return html;
+    return await res.text();
   } catch {
     return null;
   }
@@ -107,42 +109,34 @@ async function main() {
 
   console.log(`Mode: ${QUICK_MODE ? "QUICK (ATS sites only)" : "FULL"}`);
   console.log(`Queries to execute: ${queries.length}`);
+  console.log(`Search API: Serper.dev (free tier)\n`);
 
   const jobsData = loadJobs();
   console.log(`Existing jobs in database: ${jobsData.jobs.length}`);
 
-  // Step 1: Run all searches via Agent SDK (one query() call per search)
+  // Step 1: Run all searches via Serper.dev
   const allSearchResults: SearchResult[] = [];
   const errors: { source: string; query: string; error: string; timestamp: string }[] = [];
+  let searchTime = Date.now();
 
   for (let i = 0; i < queries.length; i++) {
     const q = queries[i];
-    console.log(`\n  [${i + 1}/${queries.length}] ${q.siteName}: ${q.query.slice(0, 80)}...`);
+    process.stdout.write(`  [${i + 1}/${queries.length}] ${q.siteName}... `);
 
-    try {
-      for await (const message of query({
-        prompt: `Search Google for: ${q.query}\n\nList every result with title and URL.`,
-        options: {
-          allowedTools: ["WebSearch"],
-          maxTurns: 3,
-          permissionMode: "bypassPermissions",
-        },
-      })) {
-        const msg = message as any;
-        if (msg.type === "result" && msg.subtype === "success" && msg.result) {
-          const urls = extractUrls(msg.result);
-          console.log(`    → ${urls.length} results`);
-          allSearchResults.push(...urls);
-        }
-      }
-    } catch (e) {
-      console.error(`    ✗ Search failed: ${e}`);
-      errors.push({ source: q.siteName, query: q.query, error: String(e), timestamp: new Date().toISOString() });
+    const results = await serperSearch(q.query);
+    console.log(`${results.length} results`);
+    allSearchResults.push(...results);
+
+    if (results.length === 0) {
+      errors.push({ source: q.siteName, query: q.query, error: "no results", timestamp: new Date().toISOString() });
     }
 
-    // Delay between searches
-    await new Promise((r) => setTimeout(r, 1500));
+    // Small delay to be respectful
+    await new Promise((r) => setTimeout(r, 200));
   }
+
+  searchTime = Date.now() - searchTime;
+  console.log(`\n  Search complete in ${(searchTime / 1000).toFixed(1)}s`);
 
   // Step 2: Dedup
   const uniqueUrls = new Map<string, SearchResult>();
@@ -152,7 +146,7 @@ async function main() {
     }
   }
 
-  console.log(`\n  Total search results: ${allSearchResults.length}`);
+  console.log(`  Total search results: ${allSearchResults.length}`);
   console.log(`  Unique new URLs: ${uniqueUrls.size}`);
 
   if (uniqueUrls.size === 0) {
@@ -164,7 +158,7 @@ async function main() {
     return;
   }
 
-  // Step 3: Fetch pages with plain HTTP + parse with Anthropic API
+  // Step 3: Fetch pages + parse
   console.log(`\n  Fetching & parsing ${uniqueUrls.size} pages...`);
   let fetchCount = 0;
   let fetchFailed = 0;
@@ -177,17 +171,17 @@ async function main() {
     const html = await fetchPage(url);
     if (!html) {
       fetchFailed++;
-      // Add with basic search snippet info
+      // Add with search snippet info
       mergeNewJobs(jobsData, [{
         url, title: result.title || null, company: null, ats: detectATS(url),
-        location: null, salary: null, seniority: null, source: "google_site_search", scrape_detail_failed: true,
+        location: null, salary: null, seniority: null, source: "serper", scrape_detail_failed: true,
       }]);
-      console.log(`⚠ Fetch failed — added with title: ${result.title}`);
+      console.log(`⚠ Fetch failed — ${result.title?.slice(0, 50)}`);
       continue;
     }
 
     try {
-      const parsed = await parseSinglePage({ url, html, ats: detectATS(url), source: "google_site_search" });
+      const parsed = await parseSinglePage({ url, html, ats: detectATS(url), source: "serper" });
 
       if (parsed.is_job_posting && parsed.status !== "closed") {
         mergeNewJobs(jobsData, [{
@@ -196,26 +190,24 @@ async function main() {
           seniority: parsed.seniority, source: parsed.source, scrape_detail_failed: false,
         }]);
         parseSuccess++;
-        console.log(`✓ ${parsed.title} @ ${parsed.company} | ${parsed.location || '?'} | ${parsed.salary || 'no salary'}`);
+        console.log(`✓ ${(parsed.title || "?").slice(0, 40)} @ ${parsed.company || "?"} | ${parsed.salary || "-"}`);
       } else if (parsed.status === "closed") {
         console.log(`✗ Closed`);
       } else if (!parsed.is_job_posting) {
-        console.log(`✗ Not a job posting`);
+        console.log(`✗ Not a job`);
       } else if (parsed.parse_failed) {
-        // Add with basic info on parse failure
         mergeNewJobs(jobsData, [{
           url, title: result.title || null, company: null, ats: detectATS(url),
-          location: null, salary: null, seniority: null, source: "google_site_search", scrape_detail_failed: true,
+          location: null, salary: null, seniority: null, source: "serper", scrape_detail_failed: true,
         }]);
-        console.log(`⚠ Parse failed: ${parsed.parse_fail_reason}`);
+        console.log(`⚠ Parse failed — ${parsed.parse_fail_reason?.slice(0, 40)}`);
       }
     } catch (e) {
       fetchFailed++;
-      console.log(`✗ Parse error: ${e}`);
+      console.log(`✗ Error: ${e}`);
     }
 
-    // Small delay to respect rate limits
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 100));
   }
 
   // Step 4: Save
@@ -231,8 +223,9 @@ async function main() {
   saveJobs(jobsData);
 
   console.log("\n=== Scrape Complete ===");
-  console.log(`  Queries: ${queries.length} | New jobs: ${newCount} | Parse success: ${parseSuccess} | Failures: ${fetchFailed}`);
+  console.log(`  Queries: ${queries.length} | New jobs: ${newCount} | Parsed: ${parseSuccess} | Failed: ${fetchFailed}`);
   console.log(`  Total in database: ${jobsData.jobs.length}`);
+  console.log(`  Cost: $0.00 (Serper free tier + JSON-LD parsing)`);
 }
 
 main().catch(console.error);
