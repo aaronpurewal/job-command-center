@@ -75,7 +75,20 @@ export function isDuplicate(jobs: Job[], url: string): boolean {
   return jobs.some((j) => normalizeUrl(j.url) === normalized);
 }
 
-// Add new jobs, skipping duplicates. Returns count of new jobs added.
+// Normalize title+company for cross-site dedup
+function normalizeForDedup(title: string | null, company: string | null): string | null {
+  if (!title || !company) return null;
+  return `${title.toLowerCase().replace(/[^a-z0-9]/g, "")}::${company.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+}
+
+// Check if same job (by title+company) already exists from a different site
+export function isCrossSiteDuplicate(jobs: Job[], title: string | null, company: string | null): boolean {
+  const key = normalizeForDedup(title, company);
+  if (!key) return false;
+  return jobs.some((j) => normalizeForDedup(j.title, j.company) === key);
+}
+
+// Add new jobs, skipping URL duplicates and cross-site duplicates.
 export function mergeNewJobs(
   existing: JobsData,
   newJobs: Omit<Job, "id" | "date_found" | "date_applied" | "status">[],
@@ -85,6 +98,7 @@ export function mergeNewJobs(
 
   for (const job of newJobs) {
     if (isDuplicate(existing.jobs, job.url)) continue;
+    if (isCrossSiteDuplicate(existing.jobs, job.title, job.company)) continue;
 
     existing.jobs.push({
       ...job,

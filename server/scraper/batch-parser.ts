@@ -97,9 +97,19 @@ function tryJsonLd(html: string): ParsedJob | null {
     const data = JSON.parse(match[1]);
     if (data["@type"] !== "JobPosting") return null;
 
-    const salary = data.baseSalary?.value
-      ? `$${Math.round(data.baseSalary.value.minValue / 1000)}k-$${Math.round(data.baseSalary.value.maxValue / 1000)}k`
-      : null;
+    // Parse salary, handling missing/invalid values
+    let salary: string | null = null;
+    const salaryVal = data.baseSalary?.value;
+    if (salaryVal) {
+      const min = Number(salaryVal.minValue);
+      const max = Number(salaryVal.maxValue);
+      if (!isNaN(min) && !isNaN(max) && min > 0 && max > 0 && max < 10000000) {
+        // Convert to $XXXk format if > 1000, otherwise keep as-is
+        const fmtMin = min >= 1000 ? `$${Math.round(min / 1000)}k` : `$${min}`;
+        const fmtMax = max >= 1000 ? `$${Math.round(max / 1000)}k` : `$${max}`;
+        salary = `${fmtMin}-${fmtMax}`;
+      }
+    }
 
     const location = data.jobLocation?.address
       ? [data.jobLocation.address.addressLocality, data.jobLocation.address.addressRegion]

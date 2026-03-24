@@ -24,22 +24,42 @@ interface SearchResult { url: string; title: string; snippet: string; }
 
 // URLs that are search/index pages, not actual job postings
 const JUNK_URL_PATTERNS = [
-  /wellfound\.com\/jobs\?/,
-  /startup\.jobs\/roles\//,
+  /wellfound\.com\/jobs\?/,           // wellfound search results
+  /startup\.jobs\/roles\//,           // category pages
   /startup\.jobs\/interview-questions\//,
   /startup\.jobs\/artificial-intelligence-jobs$/,
-  /startup\.jobs\/jobs\?/,
-  /startup\.jobs\/company\//,
-  /indeed\.com/,
-  /news\.ycombinator\.com/,
-  /greenhouse\.io\/job-board$/,
-  /greenhouse\.io\/embed\//,
-  /jobs\.ashbyhq\.com\/?$/,
+  /startup\.jobs\/jobs\?/,            // search results
+  /startup\.jobs\/company\//,         // company profiles
+  /indeed\.com/,                      // removed entirely
+  /news\.ycombinator\.com/,           // HN comments
+  /greenhouse\.io\/job-board$/,       // greenhouse index
+  /greenhouse\.io\/embed\//,          // embed widgets
+  /jobs\.ashbyhq\.com\/?$/,           // ashby index
+  /ziprecruiter\.com/,                // ZipRecruiter aggregate pages
+  /glassdoor\.com/,                   // Glassdoor aggregate pages
+  /upwork\.com/,                      // Upwork guides
+  /jobleads\.com/,                    // JobLeads aggregate
+  /salary\.com/,                      // salary pages
+  /\?q=/,                             // any search results page
 ];
 
 const JUNK_TITLE_PATTERNS = [
-  /^ask hn/i, /comment/i, /^i analyzed/i, /^what (is|are)/i,
-  /^why /i, /search directly/i, /job-board/i,
+  /^ask hn/i,
+  /comment/i,
+  /^i analyzed/i,
+  /^what (is|are)/i,
+  /^why /i,
+  /search directly/i,
+  /job-board/i,
+  /NOW HIRING/i,                      // ZipRecruiter style titles
+  /\d+ .* jobs? in /i,               // "485 Solutions Engineer jobs in Portland"
+  /Jobs \(NOW HIRING\)/i,
+  /How To Become/i,                   // career guide articles
+  /^\d+k?-\$\d+k? .* Jobs/i,         // "$84k-$225k AI Engineer Jobs"
+  /jobs in .*, March 2026/i,          // Glassdoor date-filtered results
+  /jobs in .*, February 2026/i,
+  /Startup Jobs in /i,                // startup.jobs city pages
+  /^\d+ .* Jobs /i,                   // "119 ai prompt engineer Jobs"
 ];
 
 function isJunk(url: string, title: string): boolean {
