@@ -127,12 +127,188 @@ function tryJsonLd(html: string): ParsedJob | null {
   }
 }
 
-// Parse a single page — tries JSON-LD first (free), falls back to Claude API
+// Try Greenhouse JSON API: boards-api.greenhouse.io/v1/boards/{company}/jobs/{id}
+async function tryGreenhouseApi(url: string): Promise<ParsedJob | null> {
+  // Extract company and job ID from URL
+  // Patterns: job-boards.greenhouse.io/{company}/jobs/{id} or boards.greenhouse.io/{company}/jobs/{id}
+  const match = url.match(/(?:job-boards|boards)\.greenhouse\.io\/([^/]+)\/jobs\/(\d+)/);
+  if (!match) return null;
+
+  const [, company, jobId] = match;
+  const apiUrl = `https://boards-api.greenhouse.io/v1/boards/${company}/jobs/${jobId}`;
+
+  try {
+    const res = await fetch(apiUrl, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+
+    const data = await res.json() as any;
+    if (!data.title) return null;
+
+    // Extract salary from content HTML if present
+    let salary: string | null = null;
+    if (data.content) {
+      const salaryMatch = data.content.match(/\$[\d,]+(?:k|K)?\s*[-–—to]+\s*\$[\d,]+(?:k|K)?/);
+      if (salaryMatch) salary = salaryMatch[0];
+    }
+
+    // Common slug → proper name mappings
+    const GREENHOUSE_NAMES: Record<string, string> = {
+      anthropic: "Anthropic", scaleai: "Scale AI", xai: "xAI", gleanwork: "Glean",
+      icapitalnetwork: "iCapital", cresta: "Cresta", labelbox: "Labelbox",
+      snorkelai: "Snorkel AI", axiomaticai: "Axiomatic AI", defenseunicorns: "Defense Unicorns",
+      runpodai: "RunPod",
+    };
+    const companyName = GREENHOUSE_NAMES[company]
+      || company.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
+
+    return {
+      url, ats: "greenhouse", source: "greenhouse_api",
+      is_job_posting: true,
+      title: data.title,
+      company: companyName,
+      location: data.location?.name || null,
+      salary,
+      seniority: null,
+      employment_type: "full-time",
+      status: "open",
+      parse_failed: false,
+      parse_fail_reason: null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Try Rippling __NEXT_DATA__ extraction
+function tryRipplingNextData(html: string, url: string): ParsedJob | null {
+  try {
+    const match = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (!match) return null;
+
+    const nextData = JSON.parse(match[1]);
+    const queries = nextData?.props?.pageProps?.dehydratedState?.queries;
+    if (!queries || !Array.isArray(queries)) return null;
+
+    // Find the job posts query
+    for (const q of queries) {
+      const items = q.state?.data?.items;
+      if (!Array.isArray(items) || items.length === 0) continue;
+
+      // Check if these are job items (have name + url fields)
+      const first = items[0];
+      if (!first.name || !first.url) continue;
+
+      // If the URL points to a specific job, find it
+      const jobSlug = url.split("/jobs/")[1];
+      if (jobSlug) {
+        const job = items.find((j: any) => j.url?.includes(jobSlug) || j.id === jobSlug);
+        if (job) {
+          const loc = Array.isArray(job.locations)
+            ? job.locations.map((l: any) => l.name || l.city).filter(Boolean).join(" / ")
+            : null;
+          return {
+            url, ats: "rippling", source: "rippling_nextdata",
+            is_job_posting: true,
+            title: job.name,
+            company: nextData?.props?.pageProps?.apiData?.jobBoardSlug?.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) || null,
+            location: loc,
+            salary: null,
+            seniority: null,
+            employment_type: "full-time",
+            status: "open",
+            parse_failed: false,
+            parse_fail_reason: null,
+          };
+        }
+      }
+
+      // Otherwise return the first job as a fallback
+      return {
+        url, ats: "rippling", source: "rippling_nextdata",
+        is_job_posting: true,
+        title: first.name,
+        company: nextData?.props?.pageProps?.apiData?.jobBoardSlug?.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) || null,
+        location: Array.isArray(first.locations)
+          ? first.locations.map((l: any) => l.name || l.city).filter(Boolean).join(" / ")
+          : null,
+        salary: null,
+        seniority: null,
+        employment_type: "full-time",
+        status: "open",
+        parse_failed: false,
+        parse_fail_reason: null,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Try Lever meta tags — Lever pages are server-rendered with good meta tags
+function tryLeverMeta(html: string, url: string): ParsedJob | null {
+  if (!url.includes("lever.co")) return null;
+
+  try {
+    const title = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i)?.[1]
+      || html.match(/<title>([^<]+)<\/title>/i)?.[1];
+    if (!title) return null;
+
+    const description = html.match(/<meta\s+property="og:description"\s+content="([^"]+)"/i)?.[1] || "";
+
+    // Extract company from URL: jobs.lever.co/{company}/...
+    const companySlug = url.match(/jobs\.lever\.co\/([^/]+)/)?.[1];
+    const company = companySlug
+      ? companySlug.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())
+      : null;
+
+    // Try to find location in the description or page
+    const locationMatch = html.match(/<div[^>]*class="[^"]*location[^"]*"[^>]*>([^<]+)</i)
+      || description.match(/((?:New York|San Francisco|Remote|London|Seattle|Austin|Chicago|Boston|Washington|Palo Alto|Los Angeles)[^,]*(?:,\s*\w+)?)/i);
+    const location = locationMatch?.[1]?.trim() || null;
+
+    return {
+      url, ats: "lever", source: "lever_meta",
+      is_job_posting: true,
+      title: title.replace(/ - .*$/, "").trim(), // strip " - Company Name" suffix
+      company,
+      location,
+      salary: null,
+      seniority: null,
+      employment_type: "full-time",
+      status: "open",
+      parse_failed: false,
+      parse_fail_reason: null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Parse a single page — tries platform-specific extractors first (free), falls back to Claude API
 export async function parseSinglePage(page: RawPage): Promise<ParsedJob> {
-  // Fast path: JSON-LD structured data (most ATS platforms have this)
+  // Fast path 1: JSON-LD structured data (Ashby, some Lever, Workday)
   const jsonLdResult = tryJsonLd(page.html);
   if (jsonLdResult) {
     return { ...jsonLdResult, url: page.url, ats: page.ats, source: page.source };
+  }
+
+  // Fast path 2: Greenhouse JSON API
+  if (page.ats === "greenhouse" || page.url.includes("greenhouse.io")) {
+    const ghResult = await tryGreenhouseApi(page.url);
+    if (ghResult) return ghResult;
+  }
+
+  // Fast path 3: Rippling __NEXT_DATA__
+  if (page.ats === "rippling" || page.url.includes("rippling.com")) {
+    const ripResult = tryRipplingNextData(page.html, page.url);
+    if (ripResult) return ripResult;
+  }
+
+  // Fast path 4: Lever meta tags
+  if (page.ats === "lever" || page.url.includes("lever.co")) {
+    const leverResult = tryLeverMeta(page.html, page.url);
+    if (leverResult) return leverResult;
   }
 
   // Slow path: send to Claude API for extraction

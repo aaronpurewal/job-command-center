@@ -3,42 +3,73 @@
 // to stay within query length limits.
 
 export const TITLE_BATCHES: string[][] = [
+  // Batch 1: Core FDE titles
   [
     "forward deployed engineer",
     "forward deployed AI engineer",
     "forward deployed software engineer",
   ],
+  // Batch 2: AI deployment / applied AI
   [
     "AI deployment engineer",
     "AI deployment strategist",
     "applied AI engineer",
   ],
+  // Batch 3: Solutions engineering (AI-qualified)
   [
     "solutions engineer AI",
     "solutions engineer LLM",
     "solutions engineer machine learning",
     "solutions architect AI",
   ],
+  // Batch 4: Consulting / implementation
   [
     "AI consultant",
     "AI implementation engineer",
     "AI integration engineer",
   ],
+  // Batch 5: Customer-facing AI
   [
     "customer engineer AI",
     "technical account manager AI",
     "AI strategist",
   ],
+  // Batch 6: Professional services
   [
     "professional services engineer AI",
     "field engineer AI",
     "pre-sales engineer AI",
   ],
+  // Batch 7: Enterprise / success
   [
     "technical solutions engineer AI",
     "enterprise AI engineer",
     "AI success engineer",
     "AI engagement manager",
+  ],
+  // Batch 8: Broader AI engineer titles (high volume, catches more companies)
+  [
+    "AI engineer",
+    "machine learning engineer",
+    "ML engineer",
+  ],
+  // Batch 9: Broader solutions / implementation
+  [
+    "solutions engineer",
+    "implementation engineer",
+    "technical solutions consultant",
+  ],
+  // Batch 10: LLM-specific roles
+  [
+    "LLM engineer",
+    "prompt engineer",
+    "generative AI engineer",
+  ],
+  // Batch 11: AI platform / infrastructure
+  [
+    "AI platform engineer",
+    "ML platform engineer",
+    "AI infrastructure engineer",
   ],
 ];
 
