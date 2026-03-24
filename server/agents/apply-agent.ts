@@ -8,6 +8,12 @@
 //   npx tsx server/agents/apply-agent.ts --batch            # apply to all "new" jobs
 //   npx tsx server/agents/apply-agent.ts --batch --limit 5  # apply to 5 new jobs
 
+import { config } from "dotenv";
+config();
+
+// Extend timeout for browser interactions (default is too short)
+process.env.CLAUDE_CODE_MAX_TURN_TIMEOUT_MS = process.env.CLAUDE_CODE_MAX_TURN_TIMEOUT_MS || "300000";
+
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { loadJobs, saveJobs, type Job } from "../scraper/dedup.js";
 import { profileServer, loadProfileFromDisk } from "../tools/profile-tools.js";
@@ -62,7 +68,7 @@ Steps:
         systemPrompt,
         // Playwright MCP for browser automation
         mcpServers: {
-          playwright: { command: "npx", args: ["@playwright/mcp@latest"] },
+          playwright: { command: "npx", args: ["@playwright/mcp@latest", "--headless=false"] },
           profile: profileServer,
           apply_tools: applyToolsServer,
         },
@@ -72,6 +78,7 @@ Steps:
           "mcp__profile__*",
           "mcp__apply_tools__*",
         ],
+        maxTurns: 50,
         permissionMode: "default",
         canUseTool: async (toolName: string, input: any) => {
           // AskUserQuestion — present to user in terminal
