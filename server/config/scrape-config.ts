@@ -59,13 +59,13 @@ export const ATS_SITES: SiteTarget[] = [
 
 export const JOB_BOARD_SITES: SiteTarget[] = [
   { name: "LinkedIn", siteOperator: "site:linkedin.com/jobs", scrapable: false },
-  { name: "Indeed", siteOperator: "site:indeed.com/viewjob", scrapable: false },
+  // Indeed removed — user request (poor result quality, lots of junk)
   { name: "Wellfound", siteOperator: "site:wellfound.com/jobs", scrapable: false },
   { name: "Built In", siteOperator: "site:builtin.com/job", scrapable: true },
   { name: "YC", siteOperator: "site:workatastartup.com", scrapable: true },
   { name: "startup.jobs", siteOperator: "site:startup.jobs", scrapable: true },
   { name: "ai-jobs.net", siteOperator: "site:ai-jobs.net", scrapable: true },
-  { name: "HN Who is Hiring", siteOperator: "site:news.ycombinator.com", scrapable: true },
+  // HN Who is Hiring removed — returns comments/articles, not job postings
 ];
 
 export const ALL_SITES: SiteTarget[] = [...ATS_SITES, ...JOB_BOARD_SITES];

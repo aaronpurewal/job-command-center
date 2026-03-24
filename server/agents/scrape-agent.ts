@@ -17,14 +17,67 @@ const QUICK_MODE = process.argv.includes("--quick");
 
 interface SearchResult { url: string; title: string; }
 
+// URLs that are search/index pages, not actual job postings
+const JUNK_URL_PATTERNS = [
+  /wellfound\.com\/jobs\?/, // wellfound search results page
+  /startup\.jobs\/roles\//, // startup.jobs category pages
+  /startup\.jobs\/interview-questions\//, // interview prep pages
+  /startup\.jobs\/artificial-intelligence-jobs$/, // index page
+  /startup\.jobs\/jobs\?/, // search results
+  /startup\.jobs\/company\//, // company profiles (not job posts)
+  /indeed\.com/, // removed entirely
+  /news\.ycombinator\.com/, // HN comments
+  /greenhouse\.io\/job-board$/, // greenhouse index
+  /greenhouse\.io\/embed\//, // embed widgets
+  /jobs\.ashbyhq\.com\/?$/, // ashby index
+];
+
+// Titles that indicate non-job-posting content
+const JUNK_TITLE_PATTERNS = [
+  /^link$/i,
+  /^view$/i,
+  /^ask hn/i,
+  /^comment on/i,
+  /^i analyzed/i,
+  /^what (is|are)/i,
+  /^why /i,
+  /search directly/i,
+  /^greenhouse\.io/,
+  /^jobs\.ashbyhq\.com$/,
+  /March 2026\)$/,  // "Mistral AI Jobs (March 2026)"
+];
+
 // Extract URLs from agent result text (markdown links, bare URLs)
 function extractUrls(text: string): SearchResult[] {
   const results: SearchResult[] = [];
   const seen = new Set<string>();
+
   for (const match of text.matchAll(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g)) {
     const url = match[2].replace(/\/+$/, "");
-    if (!seen.has(url)) { seen.add(url); results.push({ url, title: match[1] }); }
+    let title = match[1].trim();
+
+    // Skip junk URLs
+    if (JUNK_URL_PATTERNS.some((p) => p.test(url))) continue;
+
+    // Skip junk titles
+    if (JUNK_TITLE_PATTERNS.some((p) => p.test(title))) continue;
+
+    // If title is just "Link" or a bare URL, try to extract from URL slug
+    if (/^(link|view)$/i.test(title) || title.includes(".com")) {
+      const slug = url.split("/").pop()?.replace(/[-_]/g, " ").replace(/[a-f0-9]{8,}/g, "").trim();
+      if (slug && slug.length > 3) {
+        title = slug.split(" ").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+      } else {
+        continue; // Can't extract a meaningful title, skip
+      }
+    }
+
+    if (!seen.has(url)) {
+      seen.add(url);
+      results.push({ url, title });
+    }
   }
+
   return results;
 }
 
